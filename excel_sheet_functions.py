@@ -36,7 +36,7 @@ def average_thrust_during_rail_phase(flight: Flight, motor: LiquidMotor, rocket 
     # Calculate Average Mass during rail phase
     propellant_mass_values = [motor.propellant_mass(t) for t in rail_times]
     avg_propellant_mass = np.mean(propellant_mass_values)
-    avg_total_mass = rocket.mass + avg_propellant_mass # rocket.mass is dry mass
+    avg_total_mass = rocket.mass + avg_propellant_mass + 2.7# rocket.mass is dry mass
 
     # Calculate TWR
     twr_rail_avg = avg_thrust / (avg_total_mass * g)

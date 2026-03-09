@@ -21,10 +21,10 @@ parameters = {
     "ox_mass_flow_rate": 1.6,           # kg/s – total oxidizer mass flow rate
     "fuel_mass_flow_rate": 0.5,         # kg/s
     "burn_time": 5.727,                 # s
-    "thrust_curve_file": "data\\AGH-SS_Z4000-13kgload.eng",
+    "thrust_curve_file": "data/AGH-SS_Z4000-13kgload.eng",
     "dry_mass": 55.567,                 # kg – rocket dry mass (without motor and propellant)
-    "power_on_drag_file": "data\\cd_or_13kg_on.csv",
-    "power_off_drag_file": "data\\cd_or_13kg_off.csv",
+    "power_on_drag_file": "data/cd_or_13kg_on.csv",
+    "power_off_drag_file": "data/cd_or_13kg_off.csv",
     "inclination": 90,                  # deg – launch rail inclination
     "output_file": "simulation_results.txt",  # results are appended to this file
 }

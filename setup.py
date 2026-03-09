@@ -4,10 +4,9 @@ from CoolProp.CoolProp import PropsSI
 from rocketpy import Rocket, Environment, Flight, LiquidMotor, Fluid, CylindricalTank, MassFlowRateBasedTank
 import config as cfg
 
-def create_environment(date=cfg.ENV_DATE_TOMORROW, lat=cfg.ENV_LAT_FAR_OUT, lon=cfg.ENV_LON_FAR_OUT):
-    """Creates the Environment object."""
-    env = Environment(date=date, latitude=lat, longitude=lon)
-    env.set_elevation(cfg.ENV_ELEVATION_API)
+def create_environment(date=cfg.ENV_DATE_TOMORROW, lat=cfg.ENV_LAT_FAR_OUT, lon=cfg.ENV_LON_FAR_OUT, elevation=cfg.ENV_ELEVATION_FAR_OUT):
+    """Creates the Environment object. It uses external API for fetching weather data, currently it fails to work"""
+    env = Environment(date=date, latitude=lat, longitude=lon, elevation=elevation)
     env.set_atmospheric_model(type=cfg.ENV_ATM_MODEL_TYPE, file=cfg.ENV_ATM_MODEL_FILE)
     env.max_expected_height = cfg.ENV_MAX_HEIGHT
     return env
@@ -37,9 +36,8 @@ def create_fluids(p_0=cfg.P_0, ethanol_temp=cfg.ETHANOL_TEMPERATURE):
     # Calculate densities
     n2o_liq_rho = PropsSI("D", "P", p_0, "Q", 0, "NitrousOxide")
     n2o_gas_rho = PropsSI("D", "P", p_0, "Q", 1, "NitrousOxide")
-    # PropSI shows 63e5 above critical for Ethanol, subtracting 1e5 as per notebook
-    eth_liq_rho = PropsSI("D", "P", p_0 - 1e5, "T", ethanol_temp, "Ethanol")
-    eth_gas_rho = PropsSI("D", "P", p_0 - 1e5, "Q", 1, "Ethanol")
+    eth_liq_rho = PropsSI("D", "P", p_0, "T", ethanol_temp, "Ethanol")
+    eth_gas_rho = PropsSI("D", "P", p_0 - 3e5, "Q", 1, "Ethanol") # -3e5 just to avoid error, we assume nevertheless that ethanol gas mass is 0kg
 
     oxidizer_liq = Fluid(name="N2O_l", density=n2o_liq_rho)
     oxidizer_gas = Fluid(name="N2O_g", density=n2o_gas_rho)
@@ -54,14 +52,13 @@ def create_tanks(
     flux_time=cfg.FLUX_TIME,
     piston_pos=cfg.PISTON_POSITION,
     p_0=cfg.P_0,
-    liq_ox_mass_flow_rate_out=None,
-    gas_ox_mass_flow_rate_out=None,
-    fuel_mass_flow_rate_out=None,
-    fuel_gas_mass_flow_rate_out=None,
+    oxidizer_mass_flow_rate_out=cfg.OXIDIZER_MASS_FLOW_RATE_OUT,
+    fuel_mass_flow_rate_out=cfg.FUEL_MASS_FLOW_RATE_OUT,
+    start_time=cfg.START_FLUX_TIME
 ):
     """
     Creates Oxidizer and Fuel Tank objects.
-    Recalculates initial mass splits and flow rates based on inputs.
+    Recalculates initial mass splits. 
     Returns tuple: (oxidizer_tank, fuel_tank)
     """
     # 1. Get Fluids
@@ -88,35 +85,19 @@ def create_tanks(
     ox_geom = CylindricalTank(radius=tank_radius, height=adj_height_ox)
     fuel_geom = CylindricalTank(radius=tank_radius, height=adj_height_fuel)
 
-    # 5. Flow Rates
-    if liq_ox_mass_flow_rate_out is not None:
-        mfr_liq_ox = liq_ox_mass_flow_rate_out
-    else:
-        mfr_liq_ox = liq_init_mass_ox / flux_time - 0.005
-    if gas_ox_mass_flow_rate_out is not None:
-        mfr_gas_ox = gas_ox_mass_flow_rate_out
-    else:
-        mfr_gas_ox = gas_init_mass_ox / flux_time - 0.005
-    if fuel_mass_flow_rate_out is not None:
-        mfr_fuel = fuel_mass_flow_rate_out
-    else:
-        mfr_fuel = liq_init_mass_fuel / flux_time - 0.01
-    if fuel_gas_mass_flow_rate_out is not None:
-        mfr_fuel_gas = fuel_gas_mass_flow_rate_out
-    else:
-        mfr_fuel_gas = 0
-
-    # 6. Create Tank Objects
+    # 5. Create Tank Objects
+    mass_flow_rate_liq = oxidizer_mass_flow_rate_out*(liq_init_mass_ox/total_ox_mass) 
+    mass_flow_rate_gas = oxidizer_mass_flow_rate_out*(gas_init_mass_ox/total_ox_mass)
     ox_tank = MassFlowRateBasedTank(
         name="oxidizer tank",
         geometry=ox_geom,
-        flux_time=flux_time,
+        flux_time=(start_time, flux_time+start_time),
         initial_liquid_mass=liq_init_mass_ox,
         initial_gas_mass=gas_init_mass_ox,
         liquid_mass_flow_rate_in=0,
-        liquid_mass_flow_rate_out=mfr_liq_ox,
+        liquid_mass_flow_rate_out=mass_flow_rate_liq,
         gas_mass_flow_rate_in=0,
-        gas_mass_flow_rate_out=mfr_gas_ox,
+        gas_mass_flow_rate_out=mass_flow_rate_gas,
         liquid=ox_l,
         gas=ox_g,
     )
@@ -124,11 +105,11 @@ def create_tanks(
     fuel_tank = MassFlowRateBasedTank(
         name="fuel tank",
         geometry=fuel_geom,
-        flux_time=flux_time,
+        flux_time=(start_time, flux_time+start_time),
         initial_liquid_mass=liq_init_mass_fuel - 0.00001,
         initial_gas_mass=gas_init_mass_fuel,
         liquid_mass_flow_rate_in=0,
-        liquid_mass_flow_rate_out=mfr_fuel,
+        liquid_mass_flow_rate_out=fuel_mass_flow_rate_out,
         gas_mass_flow_rate_in=0,
         gas_mass_flow_rate_out=0,
         liquid=fuel_l,
@@ -142,6 +123,7 @@ def create_motor(
         tanks=None,
         thrust_curve_file=cfg.ENGINE_FILE,
         burn_time=cfg.BURN_TIME,
+        start_time=cfg.START_FLUX_TIME
         ):
     """
     Creates the LiquidMotor object.
@@ -150,6 +132,7 @@ def create_motor(
         tanks: A tuple (oxidizer_tank, fuel_tank). If None, creates default tanks.
         thrust_curve_file: Path to the thrust curve CSV/eng/or anything else too feed thrust curve file.
         burn_time: Total burn time of the motor.
+        start_time: Time at which the motor starts burning. 
     Returns:
         motor: A LiquidMotor object with the specified tanks and thrust curve.
     """
@@ -165,7 +148,7 @@ def create_motor(
         nozzle_radius=cfg.NOZZLE_RADIUS,
         center_of_dry_mass_position=cfg.CENTER_OF_DRY_MASS_POS,
         nozzle_position=cfg.NOZZLE_POSITION,
-        burn_time=burn_time,
+        burn_time=(start_time, start_time + burn_time),
         coordinate_system_orientation=cfg.MOTOR_COORD_SYS,
     )
     
